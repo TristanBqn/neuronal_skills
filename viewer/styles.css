@@ -248,6 +248,29 @@ body { background: #000; color: #fff; font-family: 'Inter Tight', ui-sans-serif,
 }
 .oc-row.is-dead .oc-row-pct { color: var(--ink-mute); }
 
+.oc-legend { font-size: 10.5px; color: var(--ink-dim); padding-right: 14px; }
+.oc-legend-row { display: flex; align-items: center; gap: 9px; padding: 4px 0; }
+.oc-leg-glow, .oc-leg-dim, .oc-leg-dead, .oc-leg-pulse {
+  width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0;
+}
+.oc-leg-glow {
+  background: var(--accent);
+  box-shadow: 0 0 12px var(--accent), 0 0 4px var(--accent);
+}
+.oc-leg-dim { background: var(--accent); opacity: 0.35; }
+.oc-leg-dead {
+  background: transparent;
+  border: 1px dashed var(--ink-mute);
+}
+.oc-leg-pulse {
+  background: var(--accent);
+  animation: oc-pulse-leg 1.2s ease-in-out infinite;
+}
+@keyframes oc-pulse-leg {
+  0%, 100% { transform: scale(0.7); opacity: 0.6; }
+  50% { transform: scale(1); opacity: 1; }
+}
+
 /* ─── Focus card ─────────────────────────────────────────────────────────── */
 .oc-focus {
   position: fixed; left: 24px; top: 80px; z-index: 11;
@@ -301,6 +324,17 @@ body { background: #000; color: #fff; font-family: 'Inter Tight', ui-sans-serif,
 .oc-focus-stat-val {
   font-size: 20px; font-weight: 600; letter-spacing: -0.02em;
   color: var(--ink); font-variant-numeric: tabular-nums;
+}
+.oc-focus-stat-unit {
+  font-size: 11px; font-weight: 500;
+  color: var(--ink-mute); letter-spacing: 0;
+  margin-left: 1px;
+}
+.oc-focus-foot {
+  font-size: 10.5px; line-height: 1.5;
+  color: var(--ink-mute);
+  margin-top: 4px;
+  font-style: italic;
 }
 .oc-focus-stat-key {
   font-size: 9.5px; font-weight: 500; margin-top: 3px;
@@ -389,6 +423,98 @@ body { background: #000; color: #fff; font-family: 'Inter Tight', ui-sans-serif,
   display: flex; gap: 6px;
   font-size: 10.5px; color: var(--ink-mute);
   letter-spacing: 0.02em;
+}
+
+/* ─── Timeline ───────────────────────────────────────────────────────────── */
+.oc-timeline {
+  position: fixed; left: 24px; right: 360px; bottom: 24px; z-index: 10;
+  display: flex; align-items: center; gap: 14px;
+  padding: 12px 16px;
+  background: var(--glass-strong);
+  border: 1px solid var(--hairline-strong);
+  border-radius: 14px;
+  backdrop-filter: blur(20px) saturate(140%);
+  -webkit-backdrop-filter: blur(20px) saturate(140%);
+  box-shadow: var(--shadow);
+}
+.oc-tl-play {
+  width: 32px; height: 32px;
+  display: grid; place-items: center;
+  background: var(--accent);
+  border: 0; border-radius: 8px;
+  color: var(--bg);
+  cursor: pointer;
+  box-shadow: 0 0 16px var(--accent-glow);
+}
+.oc-tl-play:hover { transform: scale(1.04); }
+.oc-tl-track {
+  flex: 1; height: 36px; position: relative;
+  display: flex; align-items: center;
+}
+.oc-tl-ticks {
+  position: absolute; inset: 0; display: flex;
+  align-items: center; justify-content: space-between;
+  pointer-events: none;
+}
+.oc-tl-ticks span {
+  width: 2px; border-radius: 1px;
+  background: var(--ink-mute);
+  opacity: 0.45;
+}
+.oc-tl-fill {
+  position: absolute; left: 0; top: 50%; transform: translateY(-50%);
+  height: 26px; pointer-events: none;
+  border-radius: 6px;
+  background: linear-gradient(90deg, transparent 0%, var(--accent-glow) 80%, var(--accent) 100%);
+  mix-blend-mode: screen;
+  opacity: 0.5;
+}
+.oc-theme-atlas .oc-tl-fill { mix-blend-mode: multiply; opacity: 0.35; }
+.oc-tl-range {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  margin: 0; -webkit-appearance: none; appearance: none;
+  background: transparent; cursor: pointer;
+}
+.oc-tl-range::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 4px; height: 28px;
+  background: var(--accent);
+  border-radius: 2px;
+  box-shadow: 0 0 12px var(--accent-glow);
+  cursor: pointer;
+}
+.oc-tl-range::-moz-range-thumb {
+  width: 4px; height: 28px;
+  background: var(--accent);
+  border: 0; border-radius: 2px;
+}
+.oc-tl-times {
+  display: flex; flex-direction: column; gap: 2px;
+  font-size: 9.5px; color: var(--ink-mute);
+  letter-spacing: 0.05em; text-transform: uppercase;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+.oc-tl-now { color: var(--accent); font-weight: 600; }
+.oc-tl-speed {
+  display: flex; gap: 2px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid var(--hairline);
+  border-radius: 7px;
+  padding: 2px;
+}
+.oc-theme-atlas .oc-tl-speed { background: rgba(0,0,0,0.03); }
+.oc-tl-speed button {
+  padding: 4px 7px;
+  background: transparent; border: 0;
+  border-radius: 5px;
+  font: 500 10.5px/1 inherit; color: var(--ink-dim);
+  cursor: pointer;
+  font-variant-numeric: tabular-nums;
+}
+.oc-tl-speed button.is-on {
+  background: var(--ink);
+  color: var(--bg);
 }
 
 /* Responsive — collapse side panel under 1100px */

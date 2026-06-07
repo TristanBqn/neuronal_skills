@@ -18,50 +18,42 @@
 <body>
 <div id="root"></div>
 
-<script>
-  // Live data loader: replaces the static data.js script tag.
-  // Reads ./data.json produced by the plugin. Falls back to the bundled demo
-  // dataset when running the HTML standalone (no fetch result available).
-  (function () {
-    const onReady = () => window.dispatchEvent(new Event('oc:data-ready'));
-
-    fetch('./data.json', { cache: 'no-store' })
-      .then((r) => (r.ok ? r.json() : Promise.reject(new Error('no data.json'))))
-      .then((d) => {
-        window.PLUGINS = d.PLUGINS || [];
-        window.LINKS = d.LINKS || [];
-        window.__OC_META__ = {
-          generatedAt: d.generatedAt,
-          windowDays: d.windowDays,
-          totalEvents: d.totalEvents || 0,
-          source: d.source,
-        };
-        onReady();
-      })
-      .catch(() => {
-        // Fallback to bundled demo data so the viewer remains usable offline.
-        const s = document.createElement('script');
-        s.src = './data.fallback.js';
-        s.onload = onReady;
-        s.onerror = () => {
-          window.PLUGINS = [];
-          window.LINKS = [];
-          onReady();
-        };
-        document.head.appendChild(s);
-      });
-  })();
-</script>
 <script type="text/babel" src="tweaks-panel.jsx"></script>
 <script type="text/babel" src="network.jsx"></script>
 <script type="text/babel" src="app.jsx"></script>
 <script type="text/babel" data-presets="env,react">
-  function boot() {
+  // Load the live snapshot written by the plugin (viewer/data.json). Falls back
+  // to the bundled demo dataset (data.fallback.js) when served standalone.
+  (async () => {
+    const setGlobals = (d) => {
+      window.PLUGINS = d.PLUGINS || [];
+      window.LINKS = d.LINKS || [];
+      window.__OC_META__ = {
+        windowDays: d.windowDays,
+        totalEvents: d.totalEvents,
+        generatedAt: d.generatedAt,
+        source: d.source,
+      };
+    };
+    try {
+      const r = await fetch('./data.json', { cache: 'no-store' });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      setGlobals(await r.json());
+    } catch (e) {
+      console.warn('[plugin-network] data.json indisponible, fallback démo:', e);
+      if (!window.PLUGINS) {
+        await new Promise((res) => {
+          const s = document.createElement('script');
+          s.src = 'data.fallback.js';
+          s.onload = res;
+          s.onerror = res;
+          document.head.appendChild(s);
+        });
+      }
+    }
     const root = ReactDOM.createRoot(document.getElementById('root'));
     root.render(<OpenClawApp />);
-  }
-  if (window.PLUGINS) boot();
-  else window.addEventListener('oc:data-ready', boot, { once: true });
+  })();
 </script>
 </body>
 </html>

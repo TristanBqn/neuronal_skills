@@ -101,39 +101,43 @@ window.PLUGINS = [
   },
 ];
 
-// Connections: [a, b, weight 0..1]
+// Connections: [a, b, weight 0..1, coUses]
+// weight  → line thickness / emphasis (communication frequency)
+// coUses  → number of times the two were invoked together. Drives the pulse
+//           animation: `coUses` pulses travel the link per 45s loop, directed
+//           from the more-used skill toward its complement.
 window.LINKS = [
   // memory is the central hub
-  ['memory-lancedb', 'project-mgmt', 0.92],
-  ['memory-lancedb', 'notes-md',     0.88],
-  ['memory-lancedb', 'code-search',  0.78],
-  ['memory-lancedb', 'browser',      0.55],
-  ['memory-lancedb', 'web-search',   0.62],
-  ['memory-lancedb', 'filesystem',   0.48],
+  ['memory-lancedb', 'project-mgmt', 0.92, 58],
+  ['memory-lancedb', 'notes-md',     0.88, 51],
+  ['memory-lancedb', 'code-search',  0.78, 44],
+  ['memory-lancedb', 'browser',      0.55, 33],
+  ['memory-lancedb', 'web-search',   0.62, 42],
+  ['memory-lancedb', 'filesystem',   0.48, 28],
 
   // project mgmt cross-talk
-  ['project-mgmt', 'notes-md',       0.72],
-  ['project-mgmt', 'calendar',       0.35],
-  ['project-mgmt', 'filesystem',     0.30],
-  ['project-mgmt', 'git-vcs',        0.42],
+  ['project-mgmt', 'notes-md',       0.72, 39],
+  ['project-mgmt', 'calendar',       0.35, 21],
+  ['project-mgmt', 'filesystem',     0.30, 12],
+  ['project-mgmt', 'git-vcs',        0.42, 19],
 
   // code / fs / git triangle
-  ['code-search', 'filesystem',      0.84],
-  ['code-search', 'git-vcs',         0.66],
-  ['filesystem',  'git-vcs',         0.78],
-  ['code-search', 'shell-exec',      0.30],
-  ['shell-exec',  'git-vcs',         0.36],
-  ['shell-exec',  'filesystem',      0.24],
+  ['code-search', 'filesystem',      0.84, 47],
+  ['code-search', 'git-vcs',         0.66, 35],
+  ['filesystem',  'git-vcs',         0.78, 41],
+  ['code-search', 'shell-exec',      0.30, 11],
+  ['shell-exec',  'git-vcs',         0.36, 14],
+  ['shell-exec',  'filesystem',      0.24, 8],
 
   // browser ↔ web-search
-  ['browser', 'web-search',          0.90],
-  ['browser', 'filesystem',          0.22],
-  ['web-search', 'notes-md',         0.30],
+  ['browser', 'web-search',          0.90, 55],
+  ['browser', 'filesystem',          0.22, 7],
+  ['web-search', 'notes-md',         0.30, 12],
 
   // notes
-  ['notes-md', 'filesystem',         0.55],
+  ['notes-md', 'filesystem',         0.55, 24],
 
   // dead links — drawn but unused
-  ['email', 'calendar',              0.0],
-  ['email', 'slack-bridge',          0.0],
+  ['email', 'calendar',              0.0, 0],
+  ['email', 'slack-bridge',          0.0, 0],
 ];

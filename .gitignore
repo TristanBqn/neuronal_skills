@@ -2,3 +2,5 @@ node_modules/
 viewer/data.json
 *.log
 .DS_Store
+
+new_front_end/
