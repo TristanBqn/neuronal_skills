@@ -1,0 +1,48 @@
+{
+  "id": "plugin-network",
+  "name": "Plugin Network",
+  "description": "Living map of OpenClaw plugin usage and cross-talk, served on a localhost port for SSH tunneling.",
+  "contracts": {
+    "tools": ["plugin_network_open"]
+  },
+  "activation": {
+    "onStartup": false,
+    "onDemand": true
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "windowDays": {
+        "type": "number",
+        "description": "Number of days of session history to aggregate. Default 30.",
+        "default": 30
+      },
+      "sessionsDir": {
+        "type": "string",
+        "description": "Directory scanned recursively for *.trajectory.jsonl session logs. Defaults to ~/.openclaw/agents."
+      },
+      "includeGroups": {
+        "type": "array",
+        "items": { "type": "string" },
+        "description": "Bare (non-connector) tool groups to keep as nodes. Connectors with dotted tool names (e.g. codex_apps.*) are always kept. Default: bash, cron, message, memory.",
+        "default": ["bash", "cron", "message", "memory"]
+      },
+      "port": {
+        "type": "number",
+        "description": "Local TCP port for the viewer HTTP server. Default 8742.",
+        "default": 8742
+      },
+      "bindHost": {
+        "type": "string",
+        "description": "Bind address. Default 0.0.0.0 for Docker (reachable across the container boundary; keep it private by publishing the Docker port as -p 127.0.0.1:PORT:PORT). On bare-metal, use 127.0.0.1.",
+        "default": "0.0.0.0"
+      },
+      "idleShutdownMinutes": {
+        "type": "number",
+        "description": "Stop the viewer server after this many minutes of inactivity. Default 30.",
+        "default": 30
+      }
+    }
+  }
+}

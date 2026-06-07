@@ -1,0 +1,20 @@
+{
+  "name": "openclaw-plugin-network",
+  "version": "0.1.0",
+  "description": "Live neural-net visualization of OpenClaw plugin usage and cross-plugin relationships over a sliding 30-day window.",
+  "type": "module",
+  "license": "MIT",
+  "private": true,
+  "scripts": {
+    "build": "npx -y -p typescript@latest tsc -p tsconfig.json"
+  },
+  "openclaw": {
+    "extensions": [
+      "./index.js"
+    ],
+    "compat": {
+      "pluginApi": ">=2026.5.0",
+      "minGatewayVersion": "2026.5.0"
+    }
+  }
+}
