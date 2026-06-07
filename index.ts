@@ -64,7 +64,7 @@ export default definePluginEntry({
         });
 
         const summaryLine =
-          `Snapshot: ${summary.plugins} nœuds · ${summary.files} outils · ` +
+          `Snapshot: ${summary.plugins} nœuds (dont ${summary.skills} skills) · ${summary.files} outils · ` +
           `${summary.links} liens · ${summary.events} appels · fenêtre ${windowDays}j.`;
 
         if (params.regenerateOnly) {

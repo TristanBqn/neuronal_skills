@@ -10,7 +10,7 @@ export interface SnapshotInput {
   windowDays: number;
   outputPath: string;
   // Non-connector groups to keep (connectors — dotted tool names like
-  // "codex_apps.*" — are always kept automatically). Everything else is dropped.
+  // "codex_apps.*" — and skills are always kept). Everything else is dropped.
   includeGroups: string[];
   logger?: { info?: (m: string) => void; warn?: (m: string) => void };
 }
@@ -20,6 +20,7 @@ export interface SnapshotSummary {
   links: number;
   events: number;
   files: number;
+  skills: number;
 }
 
 interface PluginNode {
@@ -27,24 +28,27 @@ interface PluginNode {
   name: string;
   short: string;
   usage: number; // 0..1 normalized against the busiest kept group
-  calls: number; // raw tool.call count
+  calls: number; // raw tool.call count (for skills: SKILL.md-read count)
   turns: number; // distinct turns this group appeared in (for directional %)
+  kind: "plugin" | "core" | "skill";
   desc: string;
   files: string[]; // individual tool names -> rendered as neurons
 }
 
-// LINKS carry both a visual weight (globally normalized, 0..1) and the raw
-// co-occurrence turn count, so the UI can show a *directional* ratio
-// (coTurns / node.turns) without re-deriving it.
-type Link = [string, string, number, number];
+type Link = [string, string, number, number]; // [a, b, visualWeight, coTurns]
 
 interface TrajectoryEvent {
   type?: string;
   ts?: string;
   sessionKey?: string;
   sessionId?: string;
-  data?: { name?: string; turnId?: string };
+  data?: { name?: string; turnId?: string; arguments?: unknown };
 }
+
+// A skill is "engaged" when the model loads its SKILL.md in a tool call.
+// This is a proxy: OpenClaw emits no skill-activation event, so reading the
+// skill body is the closest observable signal of natural (model-chosen) use.
+const SKILL_RE = /skills\/([a-z0-9_-]+)\/SKILL\.md/gi;
 
 /**
  * Group a tool name into a plugin/family bucket.
@@ -63,8 +67,8 @@ function groupKey(tool: string): string {
 export async function generateSnapshot(input: SnapshotInput): Promise<SnapshotSummary> {
   const cutoff = Date.now() - input.windowDays * 24 * 60 * 60 * 1000;
 
-  const calls = new Map<string, number>(); // group -> total tool.call count
-  const toolsByGroup = new Map<string, Set<string>>(); // group -> distinct tool names
+  const calls = new Map<string, number>(); // group -> count
+  const toolsByGroup = new Map<string, Set<string>>(); // group -> distinct tool/skill names
   const connectors = new Set<string>(); // groups derived from dotted (namespaced) tools
   const turnMembership = new Map<string, Set<string>>(); // turnId -> set of groups
   let events = 0;
@@ -80,13 +84,15 @@ export async function generateSnapshot(input: SnapshotInput): Promise<SnapshotSu
     events += await consumeFile(file, cutoff, calls, toolsByGroup, connectors, turnMembership);
   }
 
-  // Keep connectors (real plugins/integrations) + an explicit allowlist.
-  const keep = (g: string) => connectors.has(g) || input.includeGroups.includes(g);
+  // Keep connectors (real integrations), skills, and an explicit core allowlist.
+  const keep = (g: string) =>
+    g.startsWith("skill:") || connectors.has(g) || input.includeGroups.includes(g);
 
   const turnsByGroup = countTurns(turnMembership, keep);
-  const plugins = buildPluginNodes(calls, toolsByGroup, turnsByGroup, keep, input.windowDays);
+  const plugins = buildPluginNodes(calls, toolsByGroup, turnsByGroup, connectors, keep, input.windowDays);
   const links = buildLinks(turnMembership, keep);
-  const fileCount = plugins.reduce((acc, p) => acc + p.files.length, 0);
+  const fileCount = plugins.reduce((acc, p) => acc + (p.kind === "skill" ? 0 : p.files.length), 0);
+  const skillCount = plugins.filter((p) => p.kind === "skill").length;
 
   const payload = {
     generatedAt: new Date().toISOString(),
@@ -100,13 +106,12 @@ export async function generateSnapshot(input: SnapshotInput): Promise<SnapshotSu
   mkdirSync(path.dirname(input.outputPath), { recursive: true });
   await writeFile(input.outputPath, JSON.stringify(payload, null, 2), "utf8");
 
-  return { plugins: plugins.length, links: links.length, events, files: fileCount };
+  return { plugins: plugins.length, links: links.length, events, files: fileCount, skills: skillCount };
 }
 
 /**
  * Recursively collect *.trajectory.jsonl files under the sessions directory.
- * Files whose last modification predates the window are skipped entirely
- * (every event they hold is older than the cutoff).
+ * Files whose last modification predates the window are skipped entirely.
  */
 function collectTrajectoryFiles(root: string, cutoffMs: number): string[] {
   if (!existsSync(root)) return [];
@@ -144,6 +149,17 @@ async function consumeFile(
     crlfDelay: Infinity,
   });
 
+  const bump = (group: string, label: string, turnBucket: Set<string> | null) => {
+    calls.set(group, (calls.get(group) || 0) + 1);
+    let tset = toolsByGroup.get(group);
+    if (!tset) {
+      tset = new Set();
+      toolsByGroup.set(group, tset);
+    }
+    tset.add(label);
+    if (turnBucket) turnBucket.add(group);
+  };
+
   let total = 0;
   for await (const line of rl) {
     if (!line || line.charCodeAt(0) !== 123 /* '{' */) continue;
@@ -161,27 +177,36 @@ async function consumeFile(
     const tsMs = ev.ts ? Date.parse(ev.ts) : NaN;
     if (!Number.isFinite(tsMs) || tsMs < cutoffMs) continue;
 
+    // Resolve the turn bucket once; both the tool group and any engaged skills
+    // share it so co-occurrence is computed against the native turn id.
+    const turnId = ev.data?.turnId || ev.sessionKey || ev.sessionId;
+    let bucket: Set<string> | null = null;
+    if (turnId) {
+      bucket = turnMembership.get(turnId) ?? null;
+      if (!bucket) {
+        bucket = new Set();
+        turnMembership.set(turnId, bucket);
+      }
+    }
+
     const group = groupKey(tool);
     if (tool.includes(".")) connectors.add(group);
-    calls.set(group, (calls.get(group) || 0) + 1);
-
-    let tset = toolsByGroup.get(group);
-    if (!tset) {
-      tset = new Set();
-      toolsByGroup.set(group, tset);
-    }
-    tset.add(tool);
+    bump(group, tool, bucket);
     total++;
 
-    // Native turn id gives exact co-occurrence; fall back to session if absent.
-    const turnId = ev.data?.turnId || ev.sessionKey || ev.sessionId;
-    if (!turnId) continue;
-    let bucket = turnMembership.get(turnId);
-    if (!bucket) {
-      bucket = new Set();
-      turnMembership.set(turnId, bucket);
+    // Skill engagement: SKILL.md reads in the call arguments (skip edits).
+    if (tool !== "apply_patch") {
+      const argsStr = JSON.stringify(ev.data?.arguments ?? "");
+      SKILL_RE.lastIndex = 0;
+      let m: RegExpExecArray | null;
+      const seen = new Set<string>();
+      while ((m = SKILL_RE.exec(argsStr))) {
+        const sid = `skill:${m[1]}`;
+        if (seen.has(sid)) continue; // count once per event
+        seen.add(sid);
+        bump(sid, m[1], bucket);
+      }
     }
-    bucket.add(group);
   }
   return total;
 }
@@ -211,6 +236,7 @@ function buildPluginNodes(
   calls: Map<string, number>,
   toolsByGroup: Map<string, Set<string>>,
   turnsByGroup: Map<string, number>,
+  connectors: Set<string>,
   keep: (g: string) => boolean,
   windowDays: number
 ): PluginNode[] {
@@ -221,14 +247,34 @@ function buildPluginNodes(
   const out: PluginNode[] = [];
   for (const [group, c] of kept.entries()) {
     const tools = Array.from(toolsByGroup.get(group) ?? []).sort();
+    const turns = turnsByGroup.get(group) || 0;
+
+    if (group.startsWith("skill:")) {
+      const name = group.slice("skill:".length);
+      out.push({
+        id: group,
+        name: `skill: ${name}`,
+        short: name,
+        usage: c / maxCount,
+        calls: c,
+        turns,
+        kind: "skill",
+        desc: `Skill chargé dans ${turns} tour(s) sur ${windowDays} jours (proxy : lecture du SKILL.md).`,
+        files: [`${name}/SKILL.md`],
+      });
+      continue;
+    }
+
+    const kind: PluginNode["kind"] = connectors.has(group) ? "plugin" : "core";
     out.push({
       id: group,
       name: group,
       short: group,
       usage: c / maxCount,
       calls: c,
-      turns: turnsByGroup.get(group) || 0,
-      desc: `${tools.length} outil(s) · ${c} appel(s) sur ${windowDays} jours.`,
+      turns,
+      kind,
+      desc: `${kind === "plugin" ? "Plugin" : "Outil cœur"} · ${tools.length} outil(s) · ${c} appel(s) sur ${windowDays} jours.`,
       files: tools.length ? tools : [group],
     });
   }

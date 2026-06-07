@@ -42,7 +42,7 @@ export default definePluginEntry({
                     includeGroups,
                     logger: api.logger,
                 });
-                const summaryLine = `Snapshot: ${summary.plugins} nœuds · ${summary.files} outils · ` +
+                const summaryLine = `Snapshot: ${summary.plugins} nœuds (dont ${summary.skills} skills) · ${summary.files} outils · ` +
                     `${summary.links} liens · ${summary.events} appels · fenêtre ${windowDays}j.`;
                 if (params.regenerateOnly) {
                     return {
