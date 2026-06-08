@@ -5,14 +5,14 @@
 
   const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
     "clusterShape": "halo",
-    "alwaysLabels": false,
+    "alwaysLabels": true,
     "autoRotate": true,
-    "wireframe": true,
+    "wireframe": false,
     "showGlobe": true,
-    "globeOpacity": 1,
+    "globeOpacity": 0.45,
     "flat2d": false,
     "animSpeed": 0.75,
-    "pulseSize": 1
+    "pulseSize": 0.5
   } /*EDITMODE-END*/;
 
   // ─── Tooltip ──────────────────────────────────────────────────────────────
