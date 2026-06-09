@@ -21,14 +21,15 @@
     const p = data.plugin;
     const pct = Math.round(p.usage * 100);
     const calls = p.calls ?? 0;
+    const windowDays = window.__OC_META__?.windowDays || 30;
     return (
       <div className="oc-tooltip" style={{ left: data.x + 14, top: data.y + 14 }}>
         <div className="oc-tt-name">{p.name}</div>
         <div className="oc-tt-bar"><div style={{ width: pct + '%' }} /></div>
         <div className="oc-tt-meta">
-          <span>{p.usage > 0 ? `${calls} appels · ${p.turns ?? 0} tours` : 'inactive'}</span>
+          <span>{p.usage > 0 ? `${calls} calls · ${windowDays}d` : 'inactive'}</span>
           <span>·</span>
-          <span>{(window.__OC_META__?.windowDays) || 30}j</span>
+          <span>activity {pct}/100</span>
         </div>
       </div>);
 
@@ -100,12 +101,13 @@
     );
     const active = plugins.filter((p) => p.usage > 0).length;
     const dead = plugins.length - active;
+    const windowDays = window.__OC_META__?.windowDays || 30;
     const calls = (p) => p.calls ?? 0;
 
     return (
       <aside className="oc-side">
         <div className="oc-side-section">
-          <div className="oc-side-label">LAST {(window.__OC_META__?.windowDays) || 30} DAYS</div>
+          <div className="oc-side-label">SESSION · LAST {windowDays} DAYS</div>
           <div className="oc-side-stats">
             <div className="oc-stat">
               <div className="oc-stat-val">{plugins.length}</div>
@@ -153,6 +155,8 @@
             })}
           </div>
         </div>
+
+
       </aside>);
 
   }
@@ -160,27 +164,24 @@
   // ─── Focus modal (plugin details on click) ─────────────────────────────────
   function FocusCard({ plugin, links, onClose, onFocus }) {
     if (!plugin) return null;
-    // Directional ratio: of the turns where THIS node was used, the share that
-    // also involved the other node. count = coTurns (l[3]); plugin.turns is this
-    // node's distinct-turn count. Ratios can overlap (a turn may involve 3+ tools).
     const connected = (links || []).
     filter((l) => l[0] === plugin.id || l[1] === plugin.id).
-    map((l) => {
-      const count = l[3] || 0;
-      return {
-        other: l[0] === plugin.id ? l[1] : l[0],
-        count,
-        ratio: plugin.turns ? count / plugin.turns : 0
-      };
-    }).
+    map((l) => ({
+      other: l[0] === plugin.id ? l[1] : l[0],
+      weight: l[2],
+      count: l[3] || 0
+    })).
     sort((a, b) => b.count - a.count);
+    const maxCo = Math.max(1, ...connected.map((c) => c.count));
     const otherName = (id) => (window.PLUGINS.find((p) => p.id === id) || {}).name || id;
+    const windowDays = window.__OC_META__?.windowDays || 30;
+    const kindLabel = (plugin.kind || 'plugin').replace(/^\w/, (c) => c.toUpperCase());
 
     return (
       <div className="oc-focus">
         <div className="oc-focus-head">
           <div>
-            <div className="oc-focus-eyebrow">Plugin</div>
+            <div className="oc-focus-eyebrow">{kindLabel}</div>
             <div className="oc-focus-name">{plugin.name}</div>
           </div>
           <button className="oc-focus-close" onClick={onClose} aria-label="Close">×</button>
@@ -194,7 +195,11 @@
           </div>
           <div className="oc-focus-stat">
             <div className="oc-focus-stat-val">{(plugin.calls ?? 0).toLocaleString()}</div>
-            <div className="oc-focus-stat-key">Appels · 30j</div>
+            <div className="oc-focus-stat-key">Calls · {windowDays}d</div>
+          </div>
+          <div className="oc-focus-stat">
+            <div className="oc-focus-stat-val">{(plugin.turns ?? 0).toLocaleString()}</div>
+            <div className="oc-focus-stat-key">Turns</div>
           </div>
           <div className="oc-focus-stat">
             <div className="oc-focus-stat-val">{connected.filter((c) => c.count > 0).length}</div>
@@ -215,7 +220,7 @@
         </div>
 
         <div className="oc-focus-section">
-          <div className="oc-focus-label">Used alongside</div>
+          <div className="oc-focus-label">Communicates with</div>
           {connected.filter((c) => c.count > 0).length === 0 ?
           <div className="oc-focus-empty">No cross-plugin traffic in this window.</div> :
 
@@ -224,14 +229,14 @@
             <li key={c.other}>
                   <button onClick={() => onFocus(c.other)}>
                     <span className="oc-conn-name">{otherName(c.other)}</span>
-                    <span className="oc-conn-meter"><span style={{ width: Math.min(100, c.ratio * 100) + '%' }} /></span>
-                    <span className="oc-conn-pct">{Math.round(c.ratio * 100)}%</span>
+                    <span className="oc-conn-meter"><span style={{ width: c.count / maxCo * 100 + '%' }} /></span>
+                    <span className="oc-conn-pct">{c.count}</span>
                   </button>
                 </li>
             )}
             </ul>
           }
-          <div className="oc-focus-foot">Part des tours de « {plugin.name} » impliquant aussi l'autre nœud. Un tour pouvant impliquer plusieurs nœuds, ces % ne somment pas à 100.</div>
+          <div className="oc-focus-foot">Co-uses — times the two skills were invoked together. Each becomes one pulse per 45s loop; pulses flow both ways since the order of use isn't recorded.</div>
         </div>
       </div>);
 
@@ -338,7 +343,7 @@
       );
     }, [search]);
 
-    // Real total tool-call count from the snapshot aggregation.
+    // Global total comes straight from session metadata — never derived from usage
     const totalCalls = window.__OC_META__?.totalEvents ?? 0;
 
     const focusedPlugin = focusedId ? window.PLUGINS.find((p) => p.id === focusedId) : null;
@@ -367,10 +372,6 @@
           viewKey={viewKey} />
         
         <Header />
-        <SearchBar
-          value={search} onChange={setSearch}
-          suggestions={suggestions}
-          onPick={(id) => {setFocusedId(id);setSearch('');}} />
         
         <SidePanel
           plugins={visiblePlugins}

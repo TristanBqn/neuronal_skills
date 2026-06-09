@@ -78,17 +78,23 @@
 
       const fc = p.files.length;
       const baseR = density === 'aerated' ? 0.13 : density === 'dense' ? 0.085 : 0.105;
-      const groupR = baseR + fc * 0.006; // patch radius in unit-sphere terms
+      // Sparse plugins (≤3 files) get fewer AND smaller dots, so they vanish.
+      // Compensate two ways: a slightly larger patch + bolder dots pulled
+      // toward the centre, so a 1-file skill reads as one confident node.
+      const sparseBoost = Math.max(1, 1 + (4 - fc) * 0.5); // fc1→2.5× fc2→2× fc3→1.5× fc≥4→1×
+      const groupR = (baseR + fc * 0.006) * (fc <= 3 ? 1.18 : 1); // patch radius in unit-sphere terms
 
       const neurons = p.files.map((f, j) => {
         const ang = (j / fc) * Math.PI * 2 + seed(p.id + f) * Math.PI * 2;
-        const rad = (seed(p.id + f + 'r') * 0.55 + 0.35) * groupR;
+        // Keep sparse dots near the centre so they cohere into one mark.
+        const radK = fc <= 3 ? 0.45 : 1;
+        const rad = (seed(p.id + f + 'r') * 0.55 + 0.35) * groupR * radK;
         return {
           file: f,
           ox: Math.cos(ang) * rad,
           oy: Math.sin(ang) * rad,
           phase: seed(p.id + f + 'p') * Math.PI * 2,
-          size: 2.2 + seed(p.id + f + 's') * 1.8,
+          size: (2.2 + seed(p.id + f + 's') * 1.8) * sparseBoost,
         };
       });
 
@@ -96,6 +102,7 @@
         ...p,
         dir, u, v,
         groupR,
+        sparse: fc <= 3,
         neurons,
         breathPhase: seed(p.id + 'b') * Math.PI * 2,
         hueIdx: i,
@@ -740,6 +747,21 @@
       const brightness = usage;
       ctx.save();
       ctx.globalAlpha = (dimmed ? 0.25 : 1) * depthFade;
+      // Sparse plugins get a soft core glow so a 1–3 file skill still anchors
+      // the eye instead of reading as a stray speck.
+      if (g.sparse && !dead) {
+        const coreR = grPx * z * 0.9;
+        const coreGrad = ctx.createRadialGradient(center.x, center.y, 0, center.x, center.y, coreR);
+        coreGrad.addColorStop(0, glowColorAlpha(theme, g, 0.5 * usage));
+        coreGrad.addColorStop(1, glowColorAlpha(theme, g, 0));
+        ctx.save();
+        ctx.globalCompositeOperation = theme.light ? 'multiply' : 'lighter';
+        ctx.fillStyle = coreGrad;
+        ctx.beginPath();
+        ctx.arc(center.x, center.y, coreR, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
       for (const nu of g.neurons) {
         const breath = 1 + Math.sin(t * 1.4 + nu.phase) * 0.15 * usage;
         // World point: dir lifted out + tangent offset, then renormalize to hug surface.
