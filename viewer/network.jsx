@@ -48,6 +48,24 @@
     const om = Math.acos(d);
     if (om < 1e-4) return a.slice();
     const so = Math.sin(om);
+    // Near-antipodal points: the great circle is undefined and the standard
+    // formula divides by ~0, collapsing the arc into a chord through the
+    // sphere centre (the stray straight line). Route it instead by rotating
+    // `a` toward `b` around a perpendicular axis so it hugs the surface.
+    if (so < 1e-3) {
+      let axis = cross(a, [0, 1, 0]);
+      if (Math.hypot(axis[0], axis[1], axis[2]) < 1e-4) axis = cross(a, [1, 0, 0]);
+      axis = norm(axis);
+      const ang = om * t;
+      const ca = Math.cos(ang), sa = Math.sin(ang);
+      const da = dot(axis, a);
+      // Rodrigues rotation of `a` about `axis` by `ang`.
+      return norm([
+        a[0] * ca + (axis[1] * a[2] - axis[2] * a[1]) * sa + axis[0] * da * (1 - ca),
+        a[1] * ca + (axis[2] * a[0] - axis[0] * a[2]) * sa + axis[1] * da * (1 - ca),
+        a[2] * ca + (axis[0] * a[1] - axis[1] * a[0]) * sa + axis[2] * da * (1 - ca),
+      ]);
+    }
     const k0 = Math.sin((1 - t) * om) / so;
     const k1 = Math.sin(t * om) / so;
     return [a[0] * k0 + b[0] * k1, a[1] * k0 + b[1] * k1, a[2] * k0 + b[2] * k1];
@@ -236,7 +254,9 @@
       const sScale = focal / (focal - z);
       const sx = this.cx + rv[0] * R * sScale;
       const sy = this.cy + rv[1] * R * sScale;
-      const baseFade = 0.4 + 0.6 * ((rv[2] + 1) / 2);
+      // Hidden (back) hemisphere reads 30% fainter than depth alone implies.
+      const backDim = rv[2] < 0 ? 0.7 : 1;
+      const baseFade = (0.4 + 0.6 * ((rv[2] + 1) / 2)) * backDim;
       const f = this.flat;
       if (f < 1e-3) {
         return { x: sx, y: sy, z, nz: rv[2], scale: sScale, depthFade: baseFade };
@@ -653,12 +673,14 @@
           const ox = -ty / tl * lane;
           const oy = tx / tl * lane;
           const fade = Math.sin(p.t * Math.PI) * (0.5 + 0.5 * ((nz + 1) / 2));
+          // Match the surface: back-hemisphere pulses 30% fainter (eased out when flat).
+          const pulseBackDim = nz < 0 ? (0.7 + 0.3 * this.flat) : 1;
           ctx.save();
           ctx.globalCompositeOperation = theme.light ? 'source-over' : 'screen';
           ctx.shadowBlur = 12 * (1 + w);
           ctx.shadowColor = theme.pulse;
           ctx.fillStyle = theme.pulse;
-          ctx.globalAlpha = fade * (dim ? 0.25 : 0.95) * linkVis;
+          ctx.globalAlpha = fade * (dim ? 0.25 : 0.95) * linkVis * pulseBackDim;
           ctx.beginPath();
           ctx.arc(px + ox, py + oy, (2 + w * 2.2) * (this.opts.pulseSize != null ? this.opts.pulseSize : 1), 0, Math.PI * 2);
           ctx.fill();
