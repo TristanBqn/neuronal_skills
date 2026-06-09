@@ -3,6 +3,9 @@
 (function () {
   const { useState, useEffect, useRef, useMemo, useCallback } = React;
 
+  // Strip the "skill:" prefix for display only (ids/search keep the full name).
+  const stripSkill = (name) => (name || '').replace(/^skill:\s*/i, '');
+
   const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
     "clusterShape": "halo",
     "alwaysLabels": true,
@@ -24,7 +27,7 @@
     const windowDays = window.__OC_META__?.windowDays || 30;
     return (
       <div className="oc-tooltip" style={{ left: data.x + 14, top: data.y + 14 }}>
-        <div className="oc-tt-name">{p.name}</div>
+        <div className="oc-tt-name">{stripSkill(p.name)}</div>
         <div className="oc-tt-bar"><div style={{ width: pct + '%' }} /></div>
         <div className="oc-tt-meta">
           <span>{p.usage > 0 ? `${calls} calls · ${windowDays}d` : 'inactive'}</span>
@@ -61,7 +64,7 @@
         <div className="oc-search-results">
             {suggestions.slice(0, 6).map((s) =>
           <button key={s.id} className="oc-search-row" onMouseDown={() => onPick(s.id)}>
-                <span className="oc-search-row-name">{s.name}</span>
+                <span className="oc-search-row-name">{stripSkill(s.name)}</span>
                 <span className="oc-search-row-meta">{s.files.length} files · {Math.round(s.usage * 100)}%</span>
               </button>
           )}
@@ -142,10 +145,10 @@
                   key={p.id}
                   className={`oc-row${isFocus ? ' is-focus' : ''}${isHover ? ' is-hover' : ''}${p.usage === 0 ? ' is-dead' : ''}`}
                   onClick={() => onFocus(isFocus ? null : p.id)}
-                  title={`${p.name} — ${calls(p)} calls`}>
-                  
+                  title={`${stripSkill(p.name)} — ${calls(p)} calls`}>
+
                   <span className="oc-row-dot" data-idx={p._idx} />
-                  <span className="oc-row-name">{p.name}</span>
+                  <span className="oc-row-name">{stripSkill(p.name)}</span>
                   <span className="oc-row-meter">
                     <span style={{ width: pct + '%' }} />
                   </span>
@@ -173,7 +176,7 @@
     })).
     sort((a, b) => b.count - a.count);
     const maxCo = Math.max(1, ...connected.map((c) => c.count));
-    const otherName = (id) => (window.PLUGINS.find((p) => p.id === id) || {}).name || id;
+    const otherName = (id) => stripSkill((window.PLUGINS.find((p) => p.id === id) || {}).name || id);
     const windowDays = window.__OC_META__?.windowDays || 30;
     const kindLabel = (plugin.kind || 'plugin').replace(/^\w/, (c) => c.toUpperCase());
 
@@ -182,7 +185,7 @@
         <div className="oc-focus-head">
           <div>
             <div className="oc-focus-eyebrow">{kindLabel}</div>
-            <div className="oc-focus-name">{plugin.name}</div>
+            <div className="oc-focus-name">{stripSkill(plugin.name)}</div>
           </div>
           <button className="oc-focus-close" onClick={onClose} aria-label="Close">×</button>
         </div>
