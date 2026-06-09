@@ -75,9 +75,14 @@
   }
 
   // ─── Header / brand ───────────────────────────────────────────────────────
-  function Header({ theme }) {
+  function Header({ flat, onToggle }) {
     return (
-      <div className="oc-header">
+      <button
+        type="button"
+        className="oc-header oc-header-btn"
+        onClick={onToggle}
+        aria-pressed={!!flat}
+        title={flat ? 'Vue 2D — cliquer pour revenir au globe' : 'Vue globe — cliquer pour passer en 2D'}>
         <div className="oc-logo">
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
             <circle cx="12" cy="12" r="3" fill="currentColor" />
@@ -92,7 +97,11 @@
           <div className="oc-brand-title">OpenClaw</div>
           <div className="oc-brand-sub">Plugin Activity</div>
         </div>
-      </div>);
+        <span className="oc-view-toggle" aria-hidden="true">
+          <span className={`oc-view-opt${!flat ? ' is-on' : ''}`}>Globe</span>
+          <span className={`oc-view-opt${flat ? ' is-on' : ''}`}>2D</span>
+        </span>
+      </button>);
 
   }
 
@@ -374,7 +383,7 @@
           onClickBg={onClickBg}
           viewKey={viewKey} />
         
-        <Header />
+        <Header flat={t.flat2d} onToggle={() => setTweak('flat2d', !t.flat2d)} />
         
         <SidePanel
           plugins={visiblePlugins}
