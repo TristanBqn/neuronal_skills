@@ -141,10 +141,95 @@
     }).filter(Boolean);
 
     const maxCount = Math.max(1, ...linkObjs.map((l) => l.count));
-    return { groups, links: linkObjs, maxCount };
+    const web = computeWebLayout(groups, linkObjs);
+    return { groups, links: linkObjs, maxCount, webExtent: web.extent, webHub: web.hub };
   }
 
-  // (equirectangular unwrap for 2D view — lon→x lat→y, handled inside project())
+  // Stable 2D "organized spider-web" layout — independent of globe rotation.
+  // Hub at centre; its partners on an inner ring (greedily ordered so partners
+  // that talk to each other sit adjacent, minimizing crossing threads);
+  // secondary nodes on an outer ring angled toward their anchors; link-less
+  // nodes parked along the bottom. Normalized coords stored as flatNX / flatNY.
+  function computeWebLayout(groups, linkObjs) {
+    const adj = new Map(groups.map((g) => [g.id, []]));
+    const deg = new Map(groups.map((g) => [g.id, 0]));
+    for (const lk of linkObjs) {
+      if (lk.weight <= 0) continue;
+      adj.get(lk.a).push({ id: lk.b, w: lk.weight });
+      adj.get(lk.b).push({ id: lk.a, w: lk.weight });
+      deg.set(lk.a, deg.get(lk.a) + lk.weight);
+      deg.set(lk.b, deg.get(lk.b) + lk.weight);
+    }
+    const edgeW = (x, y) => {
+      const e = (adj.get(x) || []).find((n) => n.id === y);
+      return e ? e.w : 0;
+    };
+    let hub = groups[0] ? groups[0].id : null, bestDeg = -1;
+    for (const [id, d] of deg) if (d > bestDeg) { bestDeg = d; hub = id; }
+
+    const pos = new Map();
+    const placed = new Set();
+    pos.set(hub, { x: 0, y: 0 });
+    placed.add(hub);
+
+    // Inner ring — hub neighbors, greedily ordered to keep threads from crossing.
+    const ring1 = [...new Set(adj.get(hub).slice().sort((a, b) => b.w - a.w).map((n) => n.id))];
+    const ordered = [];
+    const rem = new Set(ring1);
+    let cur = ring1[0];
+    if (cur) { ordered.push(cur); rem.delete(cur); }
+    while (rem.size) {
+      let pick = null, pw = -1;
+      for (const c of rem) { const w = edgeW(cur, c); if (w > pw) { pw = w; pick = c; } }
+      if (pw <= 0) { let hw = -1; for (const c of rem) { const w = edgeW(hub, c); if (w > hw) { hw = w; pick = c; } } }
+      ordered.push(pick); rem.delete(pick); cur = pick;
+    }
+    const R1 = 1.15;
+    ordered.forEach((id, i) => {
+      const ang = (i / ordered.length) * Math.PI * 2 - Math.PI / 2;
+      pos.set(id, { x: Math.cos(ang) * R1, y: Math.sin(ang) * R1 });
+      placed.add(id);
+    });
+
+    // Outer ring — remaining linked nodes, angled toward their placed anchors.
+    const R2 = 2.05;
+    const usedAng = [];
+    const rest = groups.map((g) => g.id).filter((id) => !placed.has(id));
+    const detached = [];
+    for (const id of rest) {
+      const nbrs = (adj.get(id) || []).filter((n) => placed.has(n.id));
+      if (!nbrs.length) { detached.push(id); continue; }
+      let sx = 0, sy = 0;
+      for (const n of nbrs) { const p = pos.get(n.id); const a = Math.atan2(p.y, p.x); sx += Math.cos(a) * n.w; sy += Math.sin(a) * n.w; }
+      const ang = Math.atan2(sy, sx);
+      let rad = R2;
+      for (const a2 of usedAng) {
+        let d = ang - a2;
+        while (d > Math.PI) d -= Math.PI * 2;
+        while (d < -Math.PI) d += Math.PI * 2;
+        if (Math.abs(d) < 0.5) rad += 0.55;
+      }
+      usedAng.push(ang);
+      pos.set(id, { x: Math.cos(ang) * rad, y: Math.sin(ang) * rad });
+      placed.add(id);
+    }
+    // Detached nodes (no live links) park along the bottom.
+    detached.forEach((id, i) => {
+      const n = detached.length;
+      const x = -1.4 + (i - (n - 1) / 2) * 0.85;
+      pos.set(id, { x, y: 1.95 });
+      placed.add(id);
+    });
+
+    let ex = 0.6, ey = 0.6;
+    for (const g of groups) {
+      const p = pos.get(g.id) || { x: 0, y: 0 };
+      g.flatNX = p.x; g.flatNY = p.y;
+      ex = Math.max(ex, Math.abs(p.x) + 0.2);
+      ey = Math.max(ey, Math.abs(p.y) + 0.2);
+    }
+    return { hub, extent: { x: ex, y: ey } };
+  }
 
   // ─── COLORS ────────────────────────────────────────────────────────────────
   function neuronColor(theme, group, brightness) {
@@ -185,6 +270,8 @@
       this.targetZoom = 1;
       this.flat = 0;              // 0 = sphere, 1 = unwrapped 2D map
       this.targetFlat = 0;
+      this.pan = { x: 0, y: 0 };       // 2D view pan offset (px)
+      this.panVel = { x: 0, y: 0 };    // 2D pan inertia
 
       this.t0 = performance.now();
       this.last = this.t0;
@@ -257,22 +344,28 @@
       // Hidden (back) hemisphere reads 30% fainter than depth alone implies.
       const backDim = rv[2] < 0 ? 0.7 : 1;
       const baseFade = (0.4 + 0.6 * ((rv[2] + 1) / 2)) * backDim;
+      return { x: sx, y: sy, z, nz: rv[2], scale: sScale, depthFade: baseFade };
+    }
+
+    // Normalized web coords → screen.
+    flatScreen(nx, ny) {
+      return { x: this.webCX + this.pan.x + nx * this.webScale, y: this.webCY + this.pan.y + ny * this.webScale };
+    }
+    isFlatMode() { return this.targetFlat > 0.5; }
+
+    // Cluster centre, blended between sphere projection and the 2D web layout.
+    clusterPos(g, rv) {
+      const sc = this.project(rv);
+      if (this.flat < 1e-3) return sc;
+      const fp = this.flatScreen(g.flatNX || 0, g.flatNY || 0);
       const f = this.flat;
-      if (f < 1e-3) {
-        return { x: sx, y: sy, z, nz: rv[2], scale: sScale, depthFade: baseFade };
-      }
-      const lon = Math.atan2(rv[0], rv[1]);  // xy-plane angle (Z-pole frame)
-      const lat = Math.asin(Math.max(-1, Math.min(1, rv[2])));
-      const fx = this.cx + (lon / Math.PI) * this.flatW;
-      const fy = this.cy + (lat / (Math.PI / 2)) * this.flatH;
       return {
-        x: sx + (fx - sx) * f,
-        y: sy + (fy - sy) * f,
-        z,
-        nz: rv[2],
-        scale: sScale + (1 - sScale) * f,
-        depthFade: baseFade * (1 - f) + f,
-        lon,
+        x: sc.x + (fp.x - sc.x) * f,
+        y: sc.y + (fp.y - sc.y) * f,
+        z: sc.z,
+        nz: sc.nz,
+        scale: sc.scale + (1 - sc.scale) * f,
+        depthFade: sc.depthFade + (1 - sc.depthFade) * f,
       };
     }
 
@@ -301,6 +394,18 @@
       const usableW = (right - left) * 0.92;
       this.flatW = Math.min(usableW / 2, this.sphereR * 2.1);
       this.flatH = Math.min(this.H * 0.45, this.flatW * 0.68);
+      // 2D web spread (organized spider-web view).
+      this.webCX = this.cx;
+      this.webCY = this.cy;
+      if (this.layout && this.layout.webExtent) {
+        const wx = Math.max(0.5, this.layout.webExtent.x);
+        const wy = Math.max(0.5, this.layout.webExtent.y);
+        const aw = (right - left) * 0.92;
+        const ah = this.H * 0.92;
+        this.webScale = Math.min((aw / 2) / wx, (ah / 2) / wy) * this.zoom;
+      } else {
+        this.webScale = this.sphereR;
+      }
     }
 
     // ── Hit testing ──────────────────────────────────────────────────────────
@@ -310,7 +415,7 @@
         if ((g.vis === undefined ? 1 : g.vis) < 0.35) continue; // hidden by focus mode
         const rv = this.rotateVec(g.dir, this.rot.x, this.rot.y);
         if (rv[2] < -0.05 && this.flat < 0.5) continue; // back hemisphere (3D only)
-        const p = this.project([rv[0], rv[1], rv[2]]);
+        const p = this.clusterPos(g, rv);
         const hitR = (g.groupR * this.sphereR * p.scale) + 16;
         const d = Math.hypot(sx - p.x, sy - p.y);
         if (d < hitR && d < bestD) { bestD = d; best = g; }
@@ -328,9 +433,10 @@
         this.dragging = true; dragMoved = false;
         this.focusRot = null; // user takes control
         const rect = c.getBoundingClientRect();
-        dragStart = { x: e.clientX, y: e.clientY, rx: this.rot.x, ry: this.rot.y, t: performance.now() };
+        dragStart = { x: e.clientX, y: e.clientY, rx: this.rot.x, ry: this.rot.y, px: this.pan.x, py: this.pan.y, t: performance.now() };
         lastMove = { x: e.clientX, y: e.clientY, t: performance.now() };
         this.vel = { x: 0, y: 0 };
+        this.panVel = { x: 0, y: 0 };
         c.setPointerCapture(e.pointerId);
       });
       c.addEventListener('pointermove', (e) => {
@@ -341,16 +447,24 @@
           const dx = e.clientX - dragStart.x;
           const dy = e.clientY - dragStart.y;
           if (Math.hypot(dx, dy) > 4) dragMoved = true;
-          const k = 0.006;
-          // Horizontal drag follows the cursor (yaw tracks dx directly);
-          // vertical stays inverted so dragging down tips the globe down.
-          this.rot.y = dragStart.ry + dx * k;
-          this.rot.x = dragStart.rx - dy * k;
           const now = performance.now();
           const dt = Math.max(1, now - lastMove.t);
-          // Lighter momentum: smaller capture factor, snappier feel.
-          this.vel.y = ((e.clientX - lastMove.x) * k) / dt * 7;
-          this.vel.x = (-(e.clientY - lastMove.y) * k) / dt * 7;
+          if (this.isFlatMode()) {
+            // 2D view: left-drag pans across the web.
+            this.pan.x = dragStart.px + dx;
+            this.pan.y = dragStart.py + dy;
+            this.panVel.x = ((e.clientX - lastMove.x) / dt) * 14;
+            this.panVel.y = ((e.clientY - lastMove.y) / dt) * 14;
+          } else {
+            const k = 0.006;
+            // Horizontal drag follows the cursor (yaw tracks dx directly);
+            // vertical stays inverted so dragging down tips the globe down.
+            this.rot.y = dragStart.ry + dx * k;
+            this.rot.x = dragStart.rx - dy * k;
+            // Lighter momentum: smaller capture factor, snappier feel.
+            this.vel.y = ((e.clientX - lastMove.x) * k) / dt * 7;
+            this.vel.x = (-(e.clientY - lastMove.y) * k) / dt * 7;
+          }
           lastMove = { x: e.clientX, y: e.clientY, t: now };
           this.idleSince = now;
         } else {
@@ -452,19 +566,44 @@
         this.rot.y += dy * 0.12;
         this.rot.x += (this.focusRot.x - this.rot.x) * 0.12;
       } else if (!this.dragging) {
-        // Inertia + idle auto-rotate.
-        this.rot.y += this.vel.y;
-        this.rot.x += this.vel.x;
-        this.vel.y *= 0.88;
-        this.vel.x *= 0.88;
-        if (Math.abs(this.vel.y) < 1e-4) this.vel.y = 0;
-        if (Math.abs(this.vel.x) < 1e-4) this.vel.x = 0;
-        const idle = now - this.idleSince > 2600;
-        // Don't auto-spin while flattened into a map.
-        if (idle && this.opts.autoRotate !== false && this.targetFlat < 0.5 && Math.abs(this.vel.y) < 0.003) {
-          this.rot.y += 0.00095 * this.timeScale * (dt / 16);
+        if (this.isFlatMode()) {
+          // 2D view: pan inertia (no auto-spin).
+          this.pan.x += this.panVel.x;
+          this.pan.y += this.panVel.y;
+          this.panVel.x *= 0.86;
+          this.panVel.y *= 0.86;
+          if (Math.abs(this.panVel.x) < 0.02) this.panVel.x = 0;
+          if (Math.abs(this.panVel.y) < 0.02) this.panVel.y = 0;
+        } else {
+          // Inertia + idle auto-rotate.
+          this.rot.y += this.vel.y;
+          this.rot.x += this.vel.x;
+          this.vel.y *= 0.88;
+          this.vel.x *= 0.88;
+          if (Math.abs(this.vel.y) < 1e-4) this.vel.y = 0;
+          if (Math.abs(this.vel.x) < 1e-4) this.vel.x = 0;
+          const idle = now - this.idleSince > 2600;
+          // Don't auto-spin while flattened into a map.
+          if (idle && this.opts.autoRotate !== false && this.targetFlat < 0.5 && Math.abs(this.vel.y) < 0.003) {
+            this.rot.y += 0.00095 * this.timeScale * (dt / 16);
+          }
         }
       }
+
+      // Keep the panned web from drifting entirely off-screen.
+      if (this.flat > 0.01 && this.layout && this.layout.webExtent) {
+        const mx = this.webScale * this.layout.webExtent.x + this.W * 0.3;
+        const my = this.webScale * this.layout.webExtent.y + this.H * 0.3;
+        this.pan.x = Math.max(-mx, Math.min(mx, this.pan.x));
+        this.pan.y = Math.max(-my, Math.min(my, this.pan.y));
+      } else if (this.flat <= 0.01 && (this.pan.x || this.pan.y)) {
+        // Ease the pan back to centre once we return to the globe.
+        this.pan.x *= 0.85; this.pan.y *= 0.85;
+        if (Math.abs(this.pan.x) < 0.5) this.pan.x = 0;
+        if (Math.abs(this.pan.y) < 0.5) this.pan.y = 0;
+      }
+
+      this.canvas.style.cursor = this.dragging ? 'grabbing' : 'grab';
 
       this.updateVisibility();
       this.draw(t, dt);
@@ -591,12 +730,39 @@
         const linkVis = Math.min(visA, visB);
         if (linkVis < 0.01) continue;
 
-        // Project all arc samples — project() handles the equirectangular morph.
-        const proj = lk.pts.map((v) => {
+        // Project arc samples; in the 2D view blend each toward a web thread:
+        // straight spokes for hub links, gently bowed outward otherwise so the
+        // cross-links read as concentric web rings.
+        const flatOn = this.flat > 1e-3;
+        const fa = flatOn ? this.flatScreen(ga.flatNX || 0, ga.flatNY || 0) : null;
+        const fb = flatOn ? this.flatScreen(gb.flatNX || 0, gb.flatNY || 0) : null;
+        const isSpoke = lk.a === this.layout.webHub || lk.b === this.layout.webHub;
+        const proj = lk.pts.map((v, idx) => {
           const rv = this.rotateVec(v, this.rot.x, this.rot.y);
-          return { ...this.project(rv), nz: rv[2] };
+          const sp = this.project(rv);
+          if (!flatOn) return { ...sp, nz: rv[2] };
+          const tt = idx / (lk.pts.length - 1);
+          let lx = fa.x + (fb.x - fa.x) * tt;
+          let ly = fa.y + (fb.y - fa.y) * tt;
+          if (!isSpoke) {
+            const ox = (fa.x + fb.x) / 2 - (this.webCX + this.pan.x);
+            const oy = (fa.y + fb.y) / 2 - (this.webCY + this.pan.y);
+            const ol = Math.hypot(ox, oy) || 1;
+            const chord = Math.hypot(fb.x - fa.x, fb.y - fa.y);
+            const bow = Math.sin(tt * Math.PI) * chord * 0.16;
+            lx += (ox / ol) * bow;
+            ly += (oy / ol) * bow;
+          }
+          const f = this.flat;
+          return {
+            x: sp.x + (lx - sp.x) * f,
+            y: sp.y + (ly - sp.y) * f,
+            z: sp.z,
+            nz: rv[2],
+            scale: sp.scale + (1 - sp.scale) * f,
+            depthFade: sp.depthFade + (1 - sp.depthFade) * f,
+          };
         });
-        const seamSkip = this.flat * this.flatW; // suppress streaks across lon ±π seam
 
         // Draw segments belonging to this pass (front/back).
         ctx.lineWidth = (1.0 + w * 1.4);
@@ -604,7 +770,6 @@
           const aSeg = proj[i], bSeg = proj[i + 1];
           const segFront = (aSeg.nz + bSeg.nz) / 2 >= 0;
           if (segFront !== frontPass) continue;
-          if (seamSkip > 0 && Math.abs(aSeg.x - bSeg.x) > seamSkip) continue;
           const depthA = (aSeg.depthFade + bSeg.depthFade) / 2;
           ctx.beginPath();
           ctx.moveTo(aSeg.x, aSeg.y);
@@ -612,7 +777,7 @@
           if (isDead) {
             ctx.strokeStyle = theme.dead;
             ctx.setLineDash([2, 4]);
-            ctx.globalAlpha = 0.4 * depthA * (dim ? 0.4 : 1) * linkVis;
+            ctx.globalAlpha = 0.4 * depthA * (dim ? 0.4 : 1) * linkVis * (1 - this.flat * 0.85);
           } else {
             ctx.strokeStyle = theme.link;
             ctx.setLineDash([]);
@@ -703,7 +868,7 @@
 
     drawCluster(g, rv, t, theme) {
       const ctx = this.ctx;
-      const center = this.project(rv);
+      const center = this.clusterPos(g, rv);
       const z = center.scale;
       const shape = this.opts.clusterShape;
       const usage = g.usage;
@@ -778,11 +943,18 @@
         ];
         const nv = norm(off);
         const rvn = this.rotateVec(nv, this.rot.x, this.rot.y);
-        const p = this.project(rvn);
+        const sp = this.project(rvn);
+        let px = sp.x, py = sp.y;
+        if (this.flat > 1e-3) {
+          const fx = center.x + nu.ox * this.sphereR;
+          const fy = center.y + nu.oy * this.sphereR;
+          px = sp.x + (fx - sp.x) * this.flat;
+          py = sp.y + (fy - sp.y) * this.flat;
+        }
         const r = nu.size * z * 0.95 * breath;
         ctx.fillStyle = neuronColor(theme, g, brightness);
         ctx.beginPath();
-        ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+        ctx.arc(px, py, r, 0, Math.PI * 2);
         ctx.fill();
       }
       ctx.restore();
@@ -799,7 +971,7 @@
         if (rv[2] < 0.05 && this.flat < 0.5) continue; // only front-facing labels (3D)
         const vis = g.vis === undefined ? 1 : g.vis;
         if (vis < 0.35) continue; // suppressed by focus mode
-        const center = this.project(rv);
+        const center = this.clusterPos(g, rv);
         const isHover = this.hovered && this.hovered.id === g.id;
         const isFocus = focusedId === g.id;
         const matched = this.searchMatch ? this.searchMatch(g) : false;
