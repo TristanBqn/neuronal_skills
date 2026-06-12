@@ -164,71 +164,45 @@
       const e = (adj.get(x) || []).find((n) => n.id === y);
       return e ? e.w : 0;
     };
+    // Pick the busiest cluster as the chain start (just a stable anchor).
     let hub = groups[0] ? groups[0].id : null, bestDeg = -1;
     for (const [id, d] of deg) if (d > bestDeg) { bestDeg = d; hub = id; }
 
-    const pos = new Map();
-    const placed = new Set();
-    pos.set(hub, { x: 0, y: 0 });
-    placed.add(hub);
-
-    // Inner ring — hub neighbors, greedily ordered to keep threads from crossing.
-    const ring1 = [...new Set(adj.get(hub).slice().sort((a, b) => b.w - a.w).map((n) => n.id))];
+    // Order EVERY cluster into a single chain that keeps strongly-linked
+    // clusters next to each other, then lay the whole chain out evenly around
+    // one circle — so the map reads as a clean ring instead of a lopsided web.
     const ordered = [];
-    const rem = new Set(ring1);
-    let cur = ring1[0];
+    const rem = new Set(groups.map((g) => g.id));
+    let cur = hub;
     if (cur) { ordered.push(cur); rem.delete(cur); }
     while (rem.size) {
       let pick = null, pw = -1;
+      // Prefer the strongest still-unplaced neighbor of the current node.
       for (const c of rem) { const w = edgeW(cur, c); if (w > pw) { pw = w; pick = c; } }
-      if (pw <= 0) { let hw = -1; for (const c of rem) { const w = edgeW(hub, c); if (w > hw) { hw = w; pick = c; } } }
+      // No link from current → jump to the highest-degree remaining cluster.
+      if (pw <= 0) {
+        let hd = -1;
+        for (const c of rem) { const d = deg.get(c) || 0; if (d > hd) { hd = d; pick = c; } }
+      }
       ordered.push(pick); rem.delete(pick); cur = pick;
     }
-    const R1 = 1.15;
-    ordered.forEach((id, i) => {
-      const ang = (i / ordered.length) * Math.PI * 2 - Math.PI / 2;
-      pos.set(id, { x: Math.cos(ang) * R1, y: Math.sin(ang) * R1 });
-      placed.add(id);
-    });
 
-    // Outer ring — remaining linked nodes, angled toward their placed anchors.
-    const R2 = 2.05;
-    const usedAng = [];
-    const rest = groups.map((g) => g.id).filter((id) => !placed.has(id));
-    const detached = [];
-    for (const id of rest) {
-      const nbrs = (adj.get(id) || []).filter((n) => placed.has(n.id));
-      if (!nbrs.length) { detached.push(id); continue; }
-      let sx = 0, sy = 0;
-      for (const n of nbrs) { const p = pos.get(n.id); const a = Math.atan2(p.y, p.x); sx += Math.cos(a) * n.w; sy += Math.sin(a) * n.w; }
-      const ang = Math.atan2(sy, sx);
-      let rad = R2;
-      for (const a2 of usedAng) {
-        let d = ang - a2;
-        while (d > Math.PI) d -= Math.PI * 2;
-        while (d < -Math.PI) d += Math.PI * 2;
-        if (Math.abs(d) < 0.5) rad += 0.55;
-      }
-      usedAng.push(ang);
-      pos.set(id, { x: Math.cos(ang) * rad, y: Math.sin(ang) * rad });
-      placed.add(id);
-    }
-    // Detached nodes (no live links) park along the bottom.
-    detached.forEach((id, i) => {
-      const n = detached.length;
-      const x = -1.4 + (i - (n - 1) / 2) * 0.85;
-      pos.set(id, { x, y: 1.95 });
-      placed.add(id);
+    const pos = new Map();
+    const R = 1.5;
+    const n = ordered.length;
+    ordered.forEach((id, i) => {
+      const ang = (i / n) * Math.PI * 2 - Math.PI / 2;
+      pos.set(id, { x: Math.cos(ang) * R, y: Math.sin(ang) * R });
     });
 
     let ex = 0.6, ey = 0.6;
     for (const g of groups) {
       const p = pos.get(g.id) || { x: 0, y: 0 };
       g.flatNX = p.x; g.flatNY = p.y;
-      ex = Math.max(ex, Math.abs(p.x) + 0.2);
-      ey = Math.max(ey, Math.abs(p.y) + 0.2);
+      ex = Math.max(ex, Math.abs(p.x) + 0.3);
+      ey = Math.max(ey, Math.abs(p.y) + 0.3);
     }
-    return { hub, extent: { x: ex, y: ey } };
+    return { hub, circular: true, extent: { x: ex, y: ey } };
   }
 
   // ─── COLORS ────────────────────────────────────────────────────────────────
@@ -744,7 +718,7 @@
           const tt = idx / (lk.pts.length - 1);
           let lx = fa.x + (fb.x - fa.x) * tt;
           let ly = fa.y + (fb.y - fa.y) * tt;
-          if (!isSpoke) {
+          if (!isSpoke && !this.layout.circular) {
             const ox = (fa.x + fb.x) / 2 - (this.webCX + this.pan.x);
             const oy = (fa.y + fb.y) / 2 - (this.webCY + this.pan.y);
             const ol = Math.hypot(ox, oy) || 1;
